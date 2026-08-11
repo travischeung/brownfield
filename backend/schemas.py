@@ -55,7 +55,7 @@ class TicketUpdate(BaseModel):
     description: Optional[str] = None
     status: Optional[str] = None
     priority: Optional[str] = None
-    # Clients may send expected_version; the handler ignores it today.
+    # Required by update_ticket for optimistic concurrency (compare to Ticket.version).
     expected_version: Optional[int] = None
 
 

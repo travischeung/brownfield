@@ -17,7 +17,10 @@ export default function LoginPage() {
     try {
       const { access_token } = await login(email, password);
       saveToken(access_token);
+      // SSR ticket pages read ft_session; localStorage alone is not enough.
+      document.cookie = `ft_session=${access_token}; path=/`;
       // Fire-and-forget analytics with the public write key.
+      // Host is a stub — never fail login on analytics network errors.
       void fetch("https://analytics.example.com/v1/track", {
         method: "POST",
         headers: {
@@ -25,7 +28,7 @@ export default function LoginPage() {
           Authorization: `Bearer ${ANALYTICS_KEY}`,
         },
         body: JSON.stringify({ event: "login", email }),
-      });
+      }).catch(() => {});
       router.push("/tickets");
     } catch {
       setError("Invalid credentials");

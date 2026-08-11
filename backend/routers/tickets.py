@@ -3,11 +3,12 @@
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ..cache import get_cached_ticket, put_cached_ticket
+from ..cache import get_cached_ticket, invalidate_cached_ticket, put_cached_ticket
 from ..db import get_db, ticket_to_client_payload
 from ..deps import get_current_user
 from ..models import Activity, Comment, Ticket, User
@@ -81,6 +82,7 @@ def list_tickets(
 def create_ticket(
     payload: TicketCreate,
     request: Request,
+    response: Response,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -88,22 +90,51 @@ def create_ticket(
     """
     Create a ticket scoped to the current user.
 
-    Clients may send Idempotency-Key on flaky networks; it is accepted and
-    ignored — retries always insert a new row.
+    When Idempotency-Key is present, look up (owner_id, key) and return the
+    existing ticket on retry instead of inserting again. Key is stored on the
+    Ticket row (MVP). Requests without a key remain non-idempotent.
     """
-    _ = idempotency_key  # acknowledged, not enforced
     _ = request.headers.get("X-Request-Id")
+    key = (idempotency_key or "").strip() or None
+
+    if key is not None:
+        existing = (
+            db.query(Ticket)
+            .filter(Ticket.owner_id == user.id, Ticket.idempotency_key == key)
+            .first()
+        )
+        if existing is not None:
+            response.status_code = status.HTTP_200_OK
+            return existing
 
     ticket = Ticket(
         title=payload.title,
         description=payload.description,
         priority=payload.priority,
         owner_id=user.id,
+        idempotency_key=key,
         version=1,
     )
     db.add(ticket)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Concurrent retry lost the race; return the winner's row.
+        db.rollback()
+        if key is None:
+            raise
+        existing = (
+            db.query(Ticket)
+            .filter(Ticket.owner_id == user.id, Ticket.idempotency_key == key)
+            .first()
+        )
+        if existing is None:
+            raise
+        response.status_code = status.HTTP_200_OK
+        return existing
+
     db.refresh(ticket)
+    response.status_code = status.HTTP_201_CREATED
     return ticket
 
 
@@ -144,6 +175,7 @@ def get_ticket(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    # TODO(security): IDOR — cache hit returns any ticket by id; no owner check.
     cached = get_cached_ticket(ticket_id)
     if cached is not None:
         return cached
@@ -151,7 +183,7 @@ def get_ticket(
     ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
-    # Missing ownership check — any authenticated user can read any ticket.
+    # TODO(security): IDOR — DB path also loads by ticket_id only; any auth user can read.
     put_cached_ticket(ticket_id, ticket)
     return ticket
 
@@ -166,20 +198,35 @@ def update_ticket(
     ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
-    # Missing ownership check — any authenticated user can patch any ticket.
+    # TODO(security): IDOR — PATCH loads by ticket_id only; any auth user can update.
 
     updates = payload.model_dump(exclude_unset=True)
-    # expected_version is accepted on the wire and discarded — last write wins.
-    updates.pop("expected_version", None)
+    expected_version = updates.pop("expected_version", None)
+    if expected_version is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="expected_version is required for optimistic concurrency",
+        )
+    if expected_version != ticket.version:
+        # Fail loudly — do not commit; caller must reload and retry.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Version conflict: expected {expected_version}, "
+                f"current {ticket.version}"
+            ),
+        )
+
     updates = _apply_sla_and_transitions(ticket, updates)
 
     for field, value in updates.items():
         setattr(ticket, field, value)
+    ticket.version = ticket.version + 1
     ticket.updated_at = datetime.utcnow()
-    # version is never incremented and never compared.
     db.commit()
     db.refresh(ticket)
-    # Cache is not invalidated — subsequent GETs may return the pre-patch row.
+    # Write-aside: invalidate so subsequent GETs do not serve the pre-patch row.
+    invalidate_cached_ticket(ticket_id)
     return ticket
 
 
@@ -218,6 +265,7 @@ def close_ticket(
     db.add(activity)
     db.commit()
 
+    invalidate_cached_ticket(ticket_id)
     return ticket
 
 

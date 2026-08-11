@@ -10,6 +10,9 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="FieldTrack", version="0.5.0")
 
+# initial thoughts: this presents a security danger with allow_origins=[*] 
+# and also allow_credentials=true combined w it basically allows every
+# browser to send req back here to the endpoint
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

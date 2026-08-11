@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useRef, useState } from "react";
 import { readToken } from "@/lib/auth";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -9,6 +9,8 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 export function CreateTicketForm() {
   const [title, setTitle] = useState("");
   const [message, setMessage] = useState<string | null>(null);
+  // Stable across retries of the same submit; cleared after success.
+  const idempotencyKeyRef = useRef<string | null>(null);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -17,17 +19,28 @@ export function CreateTicketForm() {
       setMessage("Sign in first.");
       return;
     }
-    // Retries reuse no Idempotency-Key — matching the flaky-network report.
+    if (!idempotencyKeyRef.current) {
+      idempotencyKeyRef.current =
+        typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `ft-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
+    const idempotencyKey = idempotencyKeyRef.current;
+
     const res = await fetch(`${API_URL}/tickets/`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
+        "Idempotency-Key": idempotencyKey,
       },
       body: JSON.stringify({ title, description: "", priority: "medium" }),
     });
     setMessage(res.ok ? "Created." : "Failed.");
-    if (res.ok) setTitle("");
+    if (res.ok) {
+      idempotencyKeyRef.current = null;
+      setTitle("");
+    }
   }
 
   return (
