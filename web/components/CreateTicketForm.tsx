@@ -1,0 +1,46 @@
+"use client";
+
+import { FormEvent, useState } from "react";
+import { readToken } from "@/lib/auth";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+/** Client form that posts a new ticket using the stored bearer token. */
+export function CreateTicketForm() {
+  const [title, setTitle] = useState("");
+  const [message, setMessage] = useState<string | null>(null);
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    const token = readToken();
+    if (!token) {
+      setMessage("Sign in first.");
+      return;
+    }
+    // Retries reuse no Idempotency-Key — matching the flaky-network report.
+    const res = await fetch(`${API_URL}/tickets/`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ title, description: "", priority: "medium" }),
+    });
+    setMessage(res.ok ? "Created." : "Failed.");
+    if (res.ok) setTitle("");
+  }
+
+  return (
+    <form onSubmit={onSubmit} style={{ marginTop: "1.5rem", display: "grid", gap: 8, maxWidth: 400 }}>
+      <h2>New ticket</h2>
+      <input
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        placeholder="Title"
+        required
+      />
+      <button type="submit">Create</button>
+      {message && <p>{message}</p>}
+    </form>
+  );
+}
