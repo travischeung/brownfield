@@ -1,47 +1,23 @@
-# FieldTrack
+# Round A — Agent Scale Ladder
 
-A Linear-like ticket tracker used for internal engineering interviews and drills.
+Interview prep: prompt an agent, read real code, narrate tradeoffs, escalate scale. ~40 minutes (~10 per stage). Not graded on tests or polish.
 
-## Stack
-
-- **Backend** — FastAPI + SQLAlchemy (`backend/`)
-- **Frontend** — Next.js App Router (`web/`)
-- **Tests** — pytest happy-path suite (`tests/`)
-
-## Quick start
+## Skeleton
 
 ```bash
-# API
 python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+.venv\Scripts\activate
 pip install -r requirements.txt
-uvicorn backend.main:app --reload --port 8000
-
-# Web
-cd web
-npm install
-npm run dev
+uvicorn app.main:app --reload --port 8000
 ```
 
-```bash
-# Tests
-pytest
-```
+`GET /health` → `{"ok": true}`. Build from here in the agent.
 
-## Layout
+## How to run the rep
 
-```
-backend/
-  main.py
-  models.py
-  schemas.py
-  deps.py
-  db.py
-  cache.py
-  routers/          # tickets, comments, users, auth
-web/
-  app/              # pages + api routes
-  components/
-  lib/
-tests/
-```
+1. Open this repo in Cursor (Agent mode). Fast model is fine.
+2. Examiner opens stage 1 (see `.drill/EXAMINER.md` — do not open mid-rep if you are the candidate).
+3. Each stage: product question optional → one plain prompt → predict before reading → read → one tradeoff question → escalate on a symptom.
+4. After stage 4: write `.drill/ROUND_A_FULL_REP_REPORT.md`.
+
+No prompt frameworks. No tests unless you choose to. Reason out loud about what the agent produced.
